@@ -118,10 +118,85 @@ spec:
           volumeMounts:
             - name: deployment-config
               mountPath: /config
+
+        - name: metric-collector
+          {{- with include "nrKubernetesOtel.deployment.securityContext.container" . }}
+          securityContext:
+            {{- . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: [ "./pipeline-control-gateway", "--config", "/config/metrics-config.yaml" ]
+          resources:
+            {{- toYaml .Values.deployment.metricsResources | nindent 12 }}
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+            - name: MY_POD_IP
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: status.podIP
+            - name: MY_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: MY_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GATEWAY_CONFIG_FILE_PATH
+              value: /config/gateway-config.yaml
+          ports:
+            - name: otlp-http
+              containerPort: {{ .Values.ports.otlpHttp }}
+              protocol: TCP
+            - name: otlp-grpc
+              containerPort: {{ .Values.ports.otlpGrpc }}
+              protocol: TCP
+            - name: nr-http
+              containerPort: {{ .Values.ports.nrHttp }}
+              protocol: TCP
+            - name: health-http
+              containerPort: {{ .Values.ports.healthHttp }}
+              protocol: TCP
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /health/status
+              port: {{ .Values.ports.healthHttp }}
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 1
+          readinessProbe:
+            httpGet:
+              path: /health/status
+              port: {{ .Values.ports.healthHttp }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 1
+            successThreshold: 1
+            failureThreshold: 3
+          volumeMounts:
+            - name: deployment-config
+              mountPath: /config
       volumes:
         - name: deployment-config
           configMap:
             name: {{ include "nrKubernetesOtel.deployment.configMap.fullname" . }}
+        - name: metrics-config
+          configMap:
+            name: {{ include "nrKubernetesOtel.metrics.configMap.fullname" . }}
+
       {{- with include "nrKubernetesOtel.deployment.nodeSelector" . }}
       nodeSelector:
         {{- . | nindent 8 }}

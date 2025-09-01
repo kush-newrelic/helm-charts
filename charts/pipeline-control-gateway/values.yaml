@@ -8,12 +8,18 @@ autoscaling:
   maxReplicas: 10
   targetCPUUtilizationPercentage: 60
 
+zpages:
+  http:
+    port: 55680
+
 ports:
   nrHttp: 80
   otlpHttp: 4318
   otlpGrpc: 4317
   healthHttp: 13133
-  prometheus: 8888
+  prometheus: 8890
+  prometheus_metric: 8890
+  metrics: 13134
 
 prometheus:
   ip: 0.0.0.0
@@ -115,6 +121,13 @@ deployment:
     limits:
       memory: "2048Mi"
       cpu: "1000m"
+  metricsResources:
+    requests:
+      cpu: "500m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
   # -- Settings for deployment configmap
   # @default -- See `values.yaml`
   configMap:

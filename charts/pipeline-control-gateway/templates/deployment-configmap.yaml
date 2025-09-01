@@ -39,7 +39,7 @@ data:
           enabled:  {{ .Values.receivers.nrproprietaryreceiver.logfilter.enabled }}
           flush_interval:  {{ .Values.receivers.nrproprietaryreceiver.logfilter.flush_interval }}
           pattern:  {{ .Values.receivers.nrproprietaryreceiver.logfilter.pattern }}
-          buffer_size:  {{ .Values.receivers.nrproprietaryreceiver.logfilter.buffer_size }}  
+          buffer_size:  {{ .Values.receivers.nrproprietaryreceiver.logfilter.buffer_size }}
         enable_default_host:  {{ .Values.receivers.nrproprietaryreceiver.enableDefaultHost }}
         enable_runtime_metrics:  {{ .Values.receivers.nrproprietaryreceiver.enableRuntimeMetrics }}
         proxy:  {{ .Values.receivers.nrproprietaryreceiver.proxy }}
@@ -60,40 +60,7 @@ data:
             endpoint: ${env:MY_POD_IP}:{{ .Values.ports.otlpHttp }}
           grpc:
             endpoint: ${env:MY_POD_IP}:{{ .Values.ports.otlpGrpc }}
-      prometheus/usage:
-        config:
-          scrape_configs:
-            - job_name: 'pipeline-gateway-usage'
-              scrape_interval: {{ .Values.prometheus.usage.scrape_interval }}
-              static_configs:
-                - targets: [ '{{ .Values.prometheus.ip }}:{{ .Values.ports.prometheus }}' ]
-                  labels:
-                    version: {{ .Chart.Version }}
-                    podName: '${env:MY_POD_NAME}'
-                    clusterName: {{ .Values.global.cluster }}
-                    serviceName: '{{ include "nrKubernetesOtel.service.fullname" .}}'
-              metric_relabel_configs:
-                - source_labels: [ __name__ ]
-                  regex: '.*bytes_received.*'
-                  action: keep
-      prometheus/monitoring:
-        config:
-          scrape_configs:
-            - job_name: 'pipeline-gateway-monitoring'
-              scrape_interval:  {{ .Values.prometheus.scrape_interval }}
-              static_configs:
-                - targets: [ '{{ .Values.prometheus.ip }}:{{ .Values.ports.prometheus }}' ]
-                  labels:
-                    version: {{ .Chart.Version }}
-                    podName: '${env:MY_POD_NAME}'
-                    clusterName: {{ .Values.global.cluster }}
-                    serviceName: '{{ include "nrKubernetesOtel.deployment.fullname" .}}'
-              metric_relabel_configs:
-                - action: labeldrop
-                  regex: 'service_version|service_name|service_instance_id'
-                - source_labels: [ __name__ ]
-                  regex: 'godebug_.*'
-                  action: drop                    
+
 
     processors:
       memory_limiter:
@@ -167,14 +134,6 @@ data:
           receivers: [ nrproprietaryreceiver ]
           processors: [ nrprocessor ]
           exporters: [ nrcollectorexporter ]
-        metrics/usage:
-          receivers: [prometheus/usage]
-          processors: [cumulativetodelta]
-          exporters: [usageexporter]
-        metrics/monitoring:
-          receivers: [prometheus/monitoring]
-          processors: []
-          exporters: [otlphttp]
 
       telemetry:
         {{- if include "newrelic.common.verboseLog" . }}
@@ -184,8 +143,120 @@ data:
         {{- if include "nrKubernetesOtel.lowDataMode" . }}
         metrics:
           level: detailed
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: {{ .Values.prometheus.ip }}
+                    port: {{ .Values.ports.prometheus_metric }}
+                    without_units: true
+                    without_type_suffix: true
         {{- else}}
         metrics:
           level: detailed
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: {{ .Values.prometheus.ip }}
+                    port: {{ .Values.ports.prometheus_metric }}
+                    without_units: true
+                    without_type_suffix: true
         {{- end }}
     {{- end }}
+
+  metrics-config.yaml: |
+    extensions:
+      zpages:
+        endpoint:
+          ${env:MY_POD_IP}:{{ .Values.zpages.http.port }} # port to 55680
+      healthcheckv2:
+        use_v2: true
+        component_health:
+          include_permanent_errors: false
+          include_recoverable_errors: true
+          recovery_duration: 5m
+        http:
+          #endpoint: "0.0.0.0:13134" #port to 13134
+          endpoint:
+            ${env:MY_POD_IP}:{{ .Values.ports.metrics }}
+
+          status:
+            enabled: true
+            path: "/health/status"
+          config:
+            enabled: true
+            path: "/health/config"
+
+    receivers:
+      prometheus/usage:
+        config:
+          scrape_configs:
+            - job_name: 'pipeline-gateway-usage'
+              scrape_interval: {{ .Values.prometheus.usage.scrape_interval }}
+              static_configs:
+                - targets: [ '{{ .Values.prometheus.ip }}:{{ .Values.ports.prometheus_metric }}' ]
+                  labels:
+                    version: {{ .Chart.Version }}
+                    podName: '${env:MY_POD_NAME}'
+                    clusterName: {{ .Values.global.cluster }}
+                    serviceName: '{{ include "nrKubernetesOtel.service.fullname" .}}'
+              metric_relabel_configs:
+                - source_labels: [ __name__ ]
+                  regex: '.*bytes_received.*'
+                  action: keep
+
+      prometheus/monitoring:
+        config:
+          scrape_configs:
+            - job_name: 'pipeline-gateway-monitoring'
+              scrape_interval:  {{ .Values.prometheus.scrape_interval }}
+              static_configs:
+                - targets: [ '{{ .Values.prometheus.ip }}:{{ .Values.ports.prometheus_metric }}' ]
+                  labels:
+                    version: {{ .Chart.Version }}
+                    podName: '${env:MY_POD_NAME}'
+                    clusterName: {{ .Values.global.cluster }}
+                    serviceName: '{{ include "nrKubernetesOtel.deployment.fullname" .}}'
+              metric_relabel_configs:
+                - action: labeldrop
+                  regex: 'service_version|service_name|service_instance_id'
+                - source_labels: [ __name__ ]
+                  regex: 'godebug_.*'
+                  action: drop
+
+    processors:
+      cumulativetodelta:
+
+    exporters:
+      debug:
+        verbosity: detailed
+      otlphttp:
+        endpoint: {{ include "nrKubernetesOtel.endpoint" . }}
+        headers:
+          api-key: ${env:NEW_RELIC_LICENSE_KEY}
+
+      usageexporter:
+        endpoint: {{ include "nrCollector.endpoint" . }}/external-usage
+        headers:
+          api-key: ${env:NEW_RELIC_LICENSE_KEY}
+
+    service:
+      extensions: [ healthcheckv2 ]
+
+      pipelines:
+        ### Internal pipelines
+        metrics/usage:
+          receivers: [ prometheus/usage ]
+          processors: [ cumulativetodelta ]
+          exporters: [ usageexporter ]
+        metrics/monitoring:
+          receivers: [ prometheus/monitoring ]
+          processors: [ ]
+          exporters: [ otlphttp ]
+
+      telemetry:
+        logs:
+          level: info
+        metrics:
+          level: detailed
